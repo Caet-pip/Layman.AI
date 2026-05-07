@@ -1,4 +1,4 @@
-# laymanai
+# Layman.ai
 
 Core agentic concepts, built from scratch. No frameworks, no magic.
 
