@@ -28,18 +28,18 @@ Then read `examples/local_file_agent.py`. It's ~150 lines and shows exactly how 
 
 ## How an agent actually works
 
-An agent is just a loop. Here's the whole idea:
+An agent is just a loop. The pattern is called **ReAct** (Reason + Act) — the LLM reasons about what to do, acts by calling a tool, observes the result, then reasons again. That cycle repeats until it has an answer.
 
 ```
 you give it a task
   ↓
-agent asks the LLM: "what should I do?"
+agent asks the LLM: "what should I do?"   ← Reason
   ↓
 LLM says: "call this tool"
   ↓
-agent runs the tool, gets a result
+agent runs the tool, gets a result         ← Act
   ↓
-agent tells the LLM what the tool returned
+agent tells the LLM what the tool returned ← Observe
   ↓
 LLM says: "call another tool" or "here's my answer"
   ↓
@@ -166,6 +166,21 @@ judge = make_judge(client, model, max_rounds=2)
 
 result = await run(task="your task here", state=state, think=think, execute=execute, judge=judge)
 ```
+
+---
+
+## Coming soon
+
+This library is intentionally primitive right now. The concepts below are being added:
+
+- **Context management** — token budget tracking, pinned prefix strategy, and message summarization so agents can run long tasks without hitting context limits
+- **Streaming** — handling token-by-token output for real-time UIs
+- **Structured output** — reliably getting JSON back from the LLM
+- **Tool error handling** — what happens when a tool fails, and how the agent recovers
+- **More examples** — different agents showing the loop is truly reusable across use cases
+- **Multi-agent** — orchestrator and subagent patterns
+
+Feedback and contributions welcome. If something is confusing or missing, open an issue.
 
 ---
 
