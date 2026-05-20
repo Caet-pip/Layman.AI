@@ -14,12 +14,12 @@ Sending a broken message list to the LLM causes unpredictable behaviour.
 heal() strips any trailing incomplete pairs so the list is always valid.
 
 Usage:
-    from laymanai.core.heal import heal
+    from core.heal import heal
     heal(state.messages)        # mutates in place, call before every think()
 """
 
 
-def heal(messages: list[dict]) -> None:
+def heal(messages: list) -> None:
     """
     Remove trailing incomplete tool call pairs from the message list.
     Mutates in place. Safe to call even when messages is clean.
@@ -28,23 +28,22 @@ def heal(messages: list[dict]) -> None:
         last = messages[-1]
 
         # Trailing assistant message with tool calls but no results yet
-        if last["role"] == "assistant" and last.get("tool_calls"):
+        if last.role == "assistant" and last.tool_calls:
             messages.pop()
             continue
 
         # Trailing tool result(s) — walk back and check the pair is complete
-        if last["role"] == "tool":
+        if last.role == "tool":
             i = len(messages) - 1
             tool_ids_present = set()
-            while i >= 0 and messages[i]["role"] == "tool":
-                tool_ids_present.add(messages[i].get("tool_call_id"))
+            while i >= 0 and messages[i].role == "tool":
+                tool_ids_present.add(messages[i].tool_call_id)
                 i -= 1
 
-            if i >= 0 and messages[i]["role"] == "assistant" and messages[i].get("tool_calls"):
-                expected = {tc["id"] for tc in messages[i]["tool_calls"]}
+            if i >= 0 and messages[i].role == "assistant" and messages[i].tool_calls:
+                expected = {tc.id for tc in messages[i].tool_calls}
                 if tool_ids_present == expected:
-                    break  # pair is complete, stop
-                # partial results — strip everything back to before the assistant message
+                    break
                 while len(messages) > i:
                     messages.pop()
             else:
