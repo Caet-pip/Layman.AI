@@ -8,18 +8,21 @@ If you've ever wondered what actually happens inside an AI agent — this is it.
 
 ## Start here
 
-Run the example agent first. It browses a folder of files and answers questions about them:
+Install dependencies and run the example agent. It browses a folder of files and answers questions about them:
 
 ```bash
-pip install openai
+pip install -r requirements.txt
+
+# OpenAI
 export OPENAI_API_KEY=your_key
 python examples/local_file_agent.py --dir ./some_folder
-```
 
-Or with a local model via [Ollama](https://ollama.com):
+# Gemini
+export GEMINI_API_KEY=your_key
+python examples/local_file_agent.py --dir ./some_folder --backend gemini
 
-```bash
-python examples/local_file_agent.py --dir ./some_folder --backend ollama --model llama3.2
+# Ollama (local model)
+python examples/local_file_agent.py --dir ./some_folder --backend ollama --model gemma4:4b
 ```
 
 Then read `examples/local_file_agent.py`. It's ~150 lines and shows exactly how to wire everything together.
@@ -28,7 +31,7 @@ Then read `examples/local_file_agent.py`. It's ~150 lines and shows exactly how 
 
 ## How an agent actually works
 
-An agent is just a loop. The pattern is called **ReAct** (Reason + Act) — the LLM reasons about what to do, acts by calling a tool, observes the result, then reasons again. That cycle repeats until it has an answer.
+An agent is just a loop. The model reasons about what to do, acts by calling a tool, observes the result, then reasons again. That cycle repeats until it has an answer — this pattern is called **ReAct** (Reason + Act).
 
 ```
 you give it a task
@@ -39,148 +42,120 @@ LLM says: "call this tool"
   ↓
 agent runs the tool, gets a result         ← Act
   ↓
-agent tells the LLM what the tool returned ← Observe
+agent tells the LLM what happened          ← Observe
   ↓
 LLM says: "call another tool" or "here's my answer"
   ↓
 repeat until done
 ```
 
-In code, that's `core/loop.py`:
-
-```python
-for step in range(max_steps):
-    message = await think(messages)       # ask the LLM what to do next
-
-    if not message.tool_calls:
-        return message.content            # LLM has an answer, we're done
-
-    # LLM wants to call tools — run them all, then tell the LLM what happened
-    results = [await execute(tc) for tc in message.tool_calls]
-    messages.append(assistant_message)
-    messages.extend(tool_results)
-    # loop again
-```
-
-That's literally it. Everything else in this library is optional machinery around that loop.
-
 ---
 
-## The message list
+## Building your own agent
 
-The LLM doesn't have memory. Everything it knows comes from the messages you send it each turn. The message list grows as the agent works:
+Three things to define, then create an `Agent`:
 
-```
-[system prompt]           ← who the agent is, what tools it has
-[user: "find me X"]       ← the task
-[assistant: call tool_A]  ← LLM decided to use a tool
-[tool: result of tool_A]  ← what the tool returned
-[assistant: call tool_B]  ← LLM decided to use another tool
-[tool: result of tool_B]
-[assistant: "Here's what I found..."]  ← final answer
+**1. A client** — your LLM provider:
+
+```python
+from openai import AsyncOpenAI
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 ```
 
-Every time around the loop, you send the full list to the LLM. It reads all of it and decides what to do next.
+**2. Tools** — what the agent can do:
+
+```python
+from core.tools import define_tool, bundle
+
+MY_TOOL = define_tool(
+    name="my_tool",
+    description="Does something useful.",
+    properties={"input": {"type": "string", "description": "The input."}},
+    required=["input"],
+)
+```
+
+**3. An executor** — what actually runs when a tool is called:
+
+```python
+async def execute(tool_call, task):
+    if tool_call.name == "my_tool":
+        result = do_something(tool_call.arguments["input"])
+        return {"tool_call_id": tool_call.id, "content": result}
+```
+
+**Then wire it up:**
+
+```python
+from core.agent import Agent
+
+agent = Agent(
+    client=client,
+    model="gpt-4.1",
+    provider="openai",
+    tools=[MY_TOOL],
+    system_prompt="You are a helpful assistant.",
+    judge="Answer must be specific and cite sources.",  # optional quality gate
+)
+
+result = await agent.run(task="your task here", execute=execute)
+```
 
 ---
 
 ## What each file does
 
 ```
-core/loop.py        — the loop above, as a reusable function
+core/types.py       — shared data types: Message, ToolCall, LLMResponse.
+                      The neutral format everything in the harness speaks.
 
-core/heal.py        — if the agent crashes mid-step, the message list can be left
-                      broken (e.g. an assistant message that called a tool, but no
-                      tool result following it). heal() strips those broken pairs
-                      before the next LLM call so the LLM isn't confused.
-                      NOTE: this is specific to the OpenAI message format — the
-                      role/tool_call_id structure is an OpenAI API convention.
-                      Other APIs (Anthropic, Gemini) use different formats and
-                      would need their own heal() implementation.
+core/loop.py        — the agent loop. calls think, executes tools, builds
+                      the conversation history. framework and model agnostic.
+
+core/heal.py        — if the agent crashes mid-step, the message list can be
+                      left broken. heal() strips incomplete pairs before the
+                      next LLM call so the model isn't confused.
+
+core/agent.py       — the Agent class. wires together client, model, provider,
+                      tools, and judge into one object. this is what you
+                      instantiate in your own project.
+
+core/providers.py   — think() factories for each provider (OpenAI, Anthropic,
+                      Gemini, Ollama). each one translates the neutral Message
+                      format into the provider's native SDK format and back.
+
+core/tools.py       — define tools once, convert to any provider's schema with
+                      bundle(tools, provider="openai"|"anthropic"|"gemini").
 
 core/judge.py       — after the agent gives an answer, a second LLM call checks
-                      if it's actually good. if not, the loop continues.
+                      if it's actually good. if not, the loop continues with
+                      feedback. uses the same provider as the agent.
 
-state/base.py       — holds the message list and current task. extend this
-                      dataclass to add your own fields (e.g. visited URLs).
-
-tools/ask_human.py  — a tool the LLM can call when it needs input from you.
-                      Two modes:
-                        CLI mode: the agent prints the question and your terminal
-                          freezes waiting for you to type an answer. Simple, works
-                          anywhere.
-                        Server mode: instead of blocking the terminal, it calls a
-                          callback function you provide — e.g. send the question over
-                          a WebSocket to a browser UI, wait for the user to type there,
-                          and return the answer. This is how you embed ask_human into
-                          a web app without freezing a server thread.
-
-context/              — coming soon: token budget tracking, pinned prefix strategy,
-                        and message summarization for long-running agents.
+state/base.py       — holds the conversation history as a list of Message
+                      objects. extend this dataclass to add your own fields.
 ```
 
 ---
 
-## Building your own agent
+## Supported providers
 
-Three things to define, then call `run()`:
-
-**1. Tools** — what can the agent do? Define schemas (what the LLM sees) and executors (what actually runs):
-
-```python
-MY_TOOL_SCHEMA = {
-    "type": "function",
-    "function": {
-        "name": "my_tool",
-        "description": "Does something useful.",
-        "parameters": { ... }
-    }
-}
-
-async def execute(tool_call, task):
-    if tool_call.function.name == "my_tool":
-        # do the thing
-        return {"tool_call_id": tool_call.id, "content": result}
-```
-
-**2. Think** — wrap your LLM call:
-
-```python
-def make_think(client, model, tools):
-    async def think(messages):
-        response = client.chat.completions.create(model=model, messages=messages, tools=tools)
-        return response.choices[0].message
-    return think
-```
-
-**3. Run**:
-
-```python
-from core.loop import run
-from core.judge import make_judge
-from state.base import AgentState
-
-state = AgentState(messages=[{"role": "system", "content": SYSTEM_PROMPT}])
-think = make_think(client, model, TOOLS)
-judge = make_judge(client, model, max_rounds=2)
-
-result = await run(task="your task here", state=state, think=think, execute=execute, judge=judge)
-```
+| Provider | Backend flag | Client |
+|----------|-------------|--------|
+| OpenAI | `--backend openai` | `AsyncOpenAI` |
+| Gemini | `--backend gemini` | `google.genai.Client` |
+| Ollama | `--backend ollama` | `AsyncOpenAI` (compat) |
+| Anthropic | — | `AsyncAnthropic` |
 
 ---
 
 ## Coming soon
 
-This library is intentionally primitive right now. The concepts below are being added:
-
-- **Context management** — token budget tracking, pinned prefix strategy, and message summarization so agents can run long tasks without hitting context limits
-- **Streaming** — handling token-by-token output for real-time UIs
-- **Structured output** — reliably getting JSON back from the LLM
-- **Tool error handling** — what happens when a tool fails, and how the agent recovers
-- **More examples** — different agents showing the loop is truly reusable across use cases
+- **Memory** — let agents remember things across runs
+- **Context management** — token budget tracking and message summarization so agents can run long tasks without hitting context limits
+- **Streaming** — token-by-token output for real-time UIs
+- **Tool error handling** — what happens when a tool fails and how the agent recovers
 - **Multi-agent** — orchestrator and subagent patterns
-
-Feedback and contributions welcome. If something is confusing or missing, open an issue.
+- **More examples** — different agents showing the loop is reusable across use cases
 
 ---
 
