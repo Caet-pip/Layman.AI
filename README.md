@@ -6,6 +6,17 @@ If you've ever wondered what actually happens inside an AI agent — this is it.
 
 ---
 
+## Architecture
+
+Open `architecture.html` in any browser for an interactive dependency map of the entire codebase — every file, what it defines, what it imports, and how data flows between them.
+
+- Click a category group inside a card to expand its imports
+- Click an individual symbol to focus it — the source and destination cards fly to the centre of the screen with the connecting arrow highlighted
+- Drag any card by its header to reposition it
+- `+` / `−` or `Ctrl+scroll` to zoom
+
+---
+
 ## Start here
 
 Install dependencies and run the example agent. It browses a folder of files and answers questions about them:
@@ -91,7 +102,7 @@ from core.agent import Agent
 
 agent = Agent(
     client=client,
-    model="gpt-4.1",
+    model="gpt-5.5-instant",
     provider="openai",
     tools=[MY_TOOL],
     system_prompt="You are a helpful assistant.",
@@ -112,9 +123,9 @@ core/types.py       — shared data types: Message, ToolCall, LLMResponse.
 core/loop.py        — the agent loop. calls think, executes tools, builds
                       the conversation history. framework and model agnostic.
 
-core/heal.py        — if the agent crashes mid-step, the message list can be
-                      left broken. heal() strips incomplete pairs before the
-                      next LLM call so the model isn't confused.
+core/heal.py        — strips incomplete tool-call pairs from the message list
+                      before each LLM call so the model is never confused by
+                      a half-finished turn.
 
 core/agent.py       — the Agent class. wires together client, model, provider,
                       tools, and judge into one object. this is what you
@@ -133,6 +144,9 @@ core/judge.py       — after the agent gives an answer, a second LLM call check
 
 state/base.py       — holds the conversation history as a list of Message
                       objects. extend this dataclass to add your own fields.
+
+architecture.html   — interactive browser visualisation of every file's
+                      dependencies and data flow. open directly in a browser.
 ```
 
 ---

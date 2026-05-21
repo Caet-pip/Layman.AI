@@ -1,0 +1,554 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Layman.AI — Architecture</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',system-ui,sans-serif;background:#eef0f4;color:#111827;height:100vh;display:flex;flex-direction:column}
+
+header{display:flex;align-items:center;justify-content:space-between;padding:12px 24px;border-bottom:1px solid #e5e7eb;background:#fff;flex-shrink:0;gap:16px;flex-wrap:wrap;z-index:10;position:relative}
+header h1{font-size:15px;font-weight:700}
+header p{font-size:12px;color:#6b7280;margin-top:1px}
+.legend{display:flex;gap:16px;flex-wrap:wrap}
+.leg{display:flex;align-items:center;gap:7px;font-size:12px;color:#374151;font-weight:500}
+.leg-dot{width:10px;height:10px;border-radius:3px}
+.zoom-ctrl{display:flex;align-items:center;gap:6px;flex-shrink:0;margin-left:auto}
+.zoom-btn{width:26px;height:26px;border:1.5px solid #e2e4e9;background:#fff;border-radius:6px;cursor:pointer;font-size:16px;line-height:1;display:flex;align-items:center;justify-content:center;color:#374151;transition:background .1s}
+.zoom-btn:hover{background:#f3f4f6}
+#zoomLbl{font-size:12px;color:#6b7280;font-weight:600;min-width:36px;text-align:center}
+
+/* overlay: fixed to viewport, outside any transform stacking context */
+#overlay{display:none;position:fixed;inset:0;background:rgba(232,234,240,0.88);backdrop-filter:blur(3px);z-index:20;pointer-events:all;cursor:default}
+#overlay.on{display:block}
+
+/* scroll container */
+.canvas{flex:1;overflow:auto;position:relative}
+
+/* board: the zoomable flex layout.
+   z-index:25 ensures the board stacking context sits above the overlay (z-index:20)
+   so focused cards (z-31 inside board) are visible; dimmed cards rely on opacity. */
+#board{
+  display:flex;gap:36px;padding:44px 40px 100px;
+  position:relative;z-index:25;
+  transform-origin:top left;
+  width:max-content
+}
+
+/* svg lives in board coordinate space */
+#arrowSvg{position:absolute;top:0;left:0;pointer-events:none;overflow:visible}
+
+/* column */
+.col{display:flex;flex-direction:column;gap:28px;flex-shrink:0;width:256px;position:relative;z-index:3}
+
+/* card-wrap: container for drag */
+.card-wrap{position:relative}
+
+/* file card */
+.card{
+  background:#fff;border:2.5px solid #e2e4e9;border-radius:10px;overflow:hidden;
+  box-shadow:0 1px 4px rgba(0,0,0,.06);position:relative;z-index:3;
+  transition:box-shadow .25s,transform .32s cubic-bezier(.2,0,0,1),opacity .2s
+}
+.card.dimmed{opacity:.12;pointer-events:none}
+.card.focused{z-index:31;box-shadow:0 20px 60px rgba(0,0,0,.24)}
+.card.dragging{transition:none!important;transform:none!important;box-shadow:0 16px 48px rgba(0,0,0,.18);z-index:50!important}
+
+.card-header{padding:13px 14px 12px;border-bottom:1px solid rgba(0,0,0,.13);cursor:grab}
+.card-header .hdr-title{display:block;font-size:15px;font-weight:800;color:#fff;text-transform:uppercase;letter-spacing:.04em;line-height:1.2}
+
+.sec-lbl{padding:8px 14px 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#9ca3af}
+.def-row{display:flex;align-items:center;padding:9px 14px 9px 0;border-bottom:1px solid #f3f4f6}
+.def-row:last-child{border-bottom:none}
+.row-bar{width:4px;align-self:stretch;flex-shrink:0;margin-right:10px;border-radius:0 2px 2px 0}
+.def-name{font-size:13.5px;font-weight:700;font-family:'SFMono-Regular',Consolas,monospace;color:#111827;flex:1}
+.def-kind{font-size:10.5px;color:#9ca3af;font-weight:500;text-transform:uppercase;letter-spacing:.04em}
+
+.uses-section{border-top:1px solid #f3f4f6}
+.cat-group{border-bottom:1px solid #f3f4f6}
+.cat-group:last-child{border-bottom:none}
+.cat-head{display:flex;align-items:center;padding:8px 12px 8px 0;cursor:pointer;user-select:none;transition:background .08s}
+.cat-head:hover{background:#fafafa}
+.cat-bar{width:4px;align-self:stretch;flex-shrink:0;margin-right:10px;border-radius:0 2px 2px 0}
+.cat-name{font-size:13px;font-weight:700;flex:1;color:#374151}
+.cat-count{font-size:10.5px;color:#9ca3af;background:#f3f4f6;padding:1px 6px;border-radius:9999px;margin-right:6px}
+.cat-chevron{font-size:10px;color:#9ca3af;transition:transform .18s}
+.cat-head.open .cat-chevron{transform:rotate(90deg)}
+.cat-body{display:none;background:#fafbfc;border-top:1px solid #f3f4f6}
+.cat-body.open{display:block}
+
+.sym-item{padding:9px 12px 9px 14px;cursor:pointer;transition:background .08s;border-bottom:1px solid #f3f4f6}
+.sym-item:last-child{border-bottom:none}
+.sym-item:hover{background:#f3f4f6}
+.sym-item.open{background:#f0f1f5}
+.sym-label{font-size:13px;font-weight:700;font-family:'SFMono-Regular',Consolas,monospace;color:#1f2937;display:block}
+.sym-desc{font-size:12px;color:#6b7280;margin-top:3px;display:block;line-height:1.4}
+.sym-code{display:none;margin-top:8px;font-family:'SFMono-Regular',Consolas,monospace;font-size:11.5px;line-height:1.65;color:#374151;white-space:pre;overflow-x:auto;background:#f3f4f6;padding:9px 12px;border-radius:6px}
+.sym-code.open{display:block}
+.sym-code mark{background:#fef08a;color:#111;border-radius:2px;padding:0 1px}
+.kw{color:#7c3aed;font-weight:600}.fn{color:#2563eb}.st{color:#16a34a}.cm{color:#9ca3af}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Layman.AI — Architecture</h1>
+    <p>Drag headers · click a symbol to focus · ± or Ctrl+scroll to zoom</p>
+  </div>
+  <div class="legend">
+    <div class="leg"><div class="leg-dot" style="background:#7c3aed"></div>Types</div>
+    <div class="leg"><div class="leg-dot" style="background:#2563eb"></div>AI / LLM</div>
+    <div class="leg"><div class="leg-dot" style="background:#16a34a"></div>Tools</div>
+    <div class="leg"><div class="leg-dot" style="background:#ea580c"></div>Harness</div>
+    <div class="leg"><div class="leg-dot" style="background:#ca8a04"></div>Memory</div>
+  </div>
+  <div class="zoom-ctrl">
+    <button class="zoom-btn" id="zoomOut">−</button>
+    <span id="zoomLbl">75%</span>
+    <button class="zoom-btn" id="zoomIn">+</button>
+  </div>
+</header>
+
+<!-- overlay is outside canvas so it's not inside the board's transform stacking context -->
+<div id="overlay"></div>
+
+<div class="canvas" id="canvas">
+  <div id="board">
+    <svg id="arrowSvg" width="1" height="1"></svg>
+  </div>
+</div>
+
+<script>
+const C      = {types:'#7c3aed',ai:'#2563eb',tools:'#16a34a',harness:'#ea580c',memory:'#ca8a04'};
+const CLABEL = {types:'Types',  ai:'AI / LLM',tools:'Tools',  harness:'Harness',  memory:'Memory'};
+
+/* ─── data ───────────────────────────────────────────────────────────────────── */
+const FILES = {
+  types:{
+    file:'core/types.py',
+    defines:[
+      {name:'Message',    cat:'types',kind:'dataclass'},
+      {name:'ToolCall',   cat:'types',kind:'dataclass'},
+      {name:'LLMResponse',cat:'types',kind:'dataclass'},
+    ],
+    uses:[],
+  },
+  state:{
+    file:'state/base.py',
+    defines:[{name:'AgentState',cat:'memory',kind:'dataclass'}],
+    uses:[
+      {label:'types.Message',cat:'types',src:'types',
+       desc:'Type of every item in the messages list.',
+       code:`<span class="kw">from</span> core.types <span class="kw">import</span> <mark>Message</mark>\n\n@dataclass\n<span class="kw">class</span> <span class="fn">AgentState</span>:\n    messages: list  <span class="cm"># list[<mark>Message</mark>]</span>`},
+    ],
+  },
+  providers:{
+    file:'core/providers.py',
+    defines:[
+      {name:'openai_think()',   cat:'ai',kind:'factory'},
+      {name:'anthropic_think()',cat:'ai',kind:'factory'},
+      {name:'gemini_think()',   cat:'ai',kind:'factory'},
+    ],
+    uses:[
+      {label:'types.Message',cat:'types',src:'types',
+       desc:'Iterated in every _to_X_messages() converter.',
+       code:`<span class="kw">def</span> <span class="fn">_to_openai_messages</span>(messages):\n    <span class="kw">for</span> m <span class="kw">in</span> messages:  <span class="cm"># m is a <mark>Message</mark></span>\n        <span class="kw">if</span> m.role == <span class="st">"system"</span>: ...\n        <span class="kw">elif</span> m.role == <span class="st">"tool"</span>:   ...  <span class="cm"># m.tool_call_id</span>\n        <span class="kw">elif</span> m.tool_calls:        ...  <span class="cm"># m.tool_calls</span>`},
+      {label:'types.ToolCall',cat:'types',src:'types',
+       desc:'Constructed when parsing tool calls from the LLM response.',
+       code:`tcs = [\n    <mark>ToolCall</mark>(\n        id=tc.id,\n        name=tc.function.name,\n        arguments=json.<span class="fn">loads</span>(tc.function.arguments)\n    )\n    <span class="kw">for</span> tc <span class="kw">in</span> (response.choices[<span class="fn">0</span>].message.tool_calls <span class="kw">or</span> [])\n]`},
+      {label:'types.LLMResponse',cat:'types',src:'types',
+       desc:'Returned by every think() to normalise SDK responses.',
+       code:`<span class="kw">async def</span> <span class="fn">think</span>(messages):\n    ...\n    <span class="kw">return</span> <mark>LLMResponse</mark>(content=content, tool_calls=tcs)`},
+    ],
+  },
+  tools:{
+    file:'core/tools.py',
+    defines:[
+      {name:'define_tool()',cat:'tools',kind:'function'},
+      {name:'bundle()',    cat:'tools',kind:'function'},
+    ],
+    uses:[],
+  },
+  judge:{
+    file:'core/judge.py',
+    defines:[
+      {name:'make_judge()',        cat:'harness',kind:'factory'},
+      {name:'DEFAULT_JUDGE_PROMPT',cat:'harness',kind:'str'},
+    ],
+    uses:[
+      {label:'types.Message',cat:'types',src:'types',
+       desc:'Creates a fresh message containing the judge prompt.',
+       code:`response = <span class="kw">await</span> <span class="fn">think</span>(\n    [<mark>Message</mark>(role=<span class="st">"user"</span>, content=filled)]\n)`},
+    ],
+  },
+  loop:{
+    file:'core/loop.py',
+    defines:[
+      {name:'run()',     cat:'harness',kind:'async fn'},
+      {name:'MAX_STEPS',cat:'harness',kind:'constant'},
+    ],
+    uses:[
+      {label:'types.Message',cat:'types',src:'types',
+       desc:'Used to append user, assistant, and tool result messages.',
+       code:`state.messages.<span class="fn">append</span>(<mark>Message</mark>(role=<span class="st">"user"</span>, content=task))\n\nstate.messages.<span class="fn">append</span>(<mark>Message</mark>(\n    role=<span class="st">"assistant"</span>, content=response.content,\n    tool_calls=response.tool_calls,\n))\n\nstate.messages.<span class="fn">append</span>(<mark>Message</mark>(\n    role=<span class="st">"tool"</span>, content=r[<span class="st">"content"</span>],\n    tool_call_id=tc.id, tool_name=tc.name,\n))`},
+    ],
+  },
+  agent:{
+    file:'core/agent.py',
+    defines:[{name:'Agent',cat:'harness',kind:'class'}],
+    uses:[
+      {label:'providers.openai_think',   cat:'ai',src:'providers',
+       desc:'Stored in _THINK_FACTORIES for the "openai" / "ollama" provider key.',
+       code:`_THINK_FACTORIES = {\n    <span class="st">"openai"</span>:    <mark>openai_think</mark>,\n    <span class="st">"anthropic"</span>: anthropic_think,\n    <span class="st">"gemini"</span>:    gemini_think,\n    <span class="st">"ollama"</span>:    openai_think,\n}`},
+      {label:'providers.anthropic_think',cat:'ai',src:'providers',
+       desc:'Stored in _THINK_FACTORIES for the "anthropic" provider key.',
+       code:`_THINK_FACTORIES = {\n    <span class="st">"openai"</span>:    openai_think,\n    <span class="st">"anthropic"</span>: <mark>anthropic_think</mark>,\n    <span class="st">"gemini"</span>:    gemini_think,\n    <span class="st">"ollama"</span>:    openai_think,\n}`},
+      {label:'providers.gemini_think',   cat:'ai',src:'providers',
+       desc:'Stored in _THINK_FACTORIES for the "gemini" provider key.',
+       code:`_THINK_FACTORIES = {\n    <span class="st">"openai"</span>:    openai_think,\n    <span class="st">"anthropic"</span>: anthropic_think,\n    <span class="st">"gemini"</span>:    <mark>gemini_think</mark>,\n    <span class="st">"ollama"</span>:    openai_think,\n}`},
+      {label:'tools.bundle',cat:'tools',src:'tools',
+       desc:'Converts define_tool() dicts to provider-specific format once at init.',
+       code:`self._tools = <mark>bundle</mark>(tools, provider=_TOOL_FORMATS[provider])\nself._think = _THINK_FACTORIES[provider](client, model, self._tools)`},
+      {label:'judge.make_judge',cat:'harness',src:'judge',
+       desc:"Creates the judge closure using the same provider's think function.",
+       code:`self._judge = <mark>make_judge</mark>(\n    judge_think,\n    max_rounds=max_judge_rounds,\n    extra_criteria=extra,\n    prompt=judge_prompt,\n)`},
+      {label:'judge.DEFAULT_JUDGE_PROMPT',cat:'harness',src:'judge',
+       desc:'Default judge prompt template; user can override with judge_prompt=.',
+       code:`<span class="kw">def</span> <span class="fn">__init__</span>(self, ...,\n    judge_prompt: str = <mark>DEFAULT_JUDGE_PROMPT</mark>, ...): ...`},
+      {label:'loop.run',cat:'harness',src:'loop',
+       desc:'The core ReAct loop — called with all wired-up pieces injected.',
+       code:`<span class="kw">return await</span> <mark>run</mark>(\n    task=task,\n    state=state,\n    think=self._think,\n    execute=execute,\n    judge=self._judge,\n    max_steps=self._max_steps,\n)`},
+      {label:'loop.MAX_STEPS',cat:'harness',src:'loop',
+       desc:'Default cap on loop iterations; user can override with max_steps=.',
+       code:`<span class="kw">def</span> <span class="fn">__init__</span>(self, ..., max_steps: int = <mark>MAX_STEPS</mark>): ...`},
+      {label:'types.Message',cat:'types',src:'types',
+       desc:'Seeds the conversation with a system message.',
+       code:`state = AgentState(\n    messages=[<mark>Message</mark>(role=<span class="st">"system"</span>, content=self._system_prompt)]\n)`},
+      {label:'state.AgentState',cat:'memory',src:'state',
+       desc:'Fresh conversation history created for every Agent.run() call.',
+       code:`state = <mark>AgentState</mark>(\n    messages=[Message(role=<span class="st">"system"</span>, content=self._system_prompt)]\n)\n<span class="kw">return await</span> <span class="fn">run</span>(task=task, state=state, ...)`},
+    ],
+  },
+  examples:{
+    file:'examples/local_file_agent.py',
+    defines:[
+      {name:'client',              cat:'ai',   kind:'SDK instance'},
+      {name:'LIST_FILES, READ_FILE',cat:'tools',kind:'tool schemas'},
+      {name:'execute()',           cat:'tools', kind:'async fn'},
+    ],
+    uses:[
+      {label:'agent.Agent',cat:'harness',src:'agent',
+       desc:'Instantiated with client + tools + provider; .run() starts the loop.',
+       code:`agent = <mark>Agent</mark>(\n    client=client, model=model,\n    provider=args.backend,\n    tools=[LIST_FILES, READ_FILE, ASK_HUMAN],\n    system_prompt=SYSTEM_PROMPT,\n    judge=<span class="st">"Answer must reference specific filenames."</span>,\n)\nresult = <span class="kw">await</span> agent.<span class="fn">run</span>(task=task, execute=<span class="fn">make_execute</span>(target_dir))`},
+      {label:'tools.define_tool',cat:'tools',src:'tools',
+       desc:'Used to declare LIST_FILES and READ_FILE tool schemas.',
+       code:`LIST_FILES = <mark>define_tool</mark>(\n    name=<span class="st">"list_files"</span>,\n    description=<span class="st">"List all files in the directory."</span>,\n    properties={}, required=[],\n)\nREAD_FILE = <mark>define_tool</mark>(\n    name=<span class="st">"read_file"</span>,\n    description=<span class="st">"Read a file's contents."</span>,\n    properties={<span class="st">"path"</span>:{<span class="st">"type"</span>:<span class="st">"string"</span>}}, required=[<span class="st">"path"</span>],\n)`},
+    ],
+  },
+};
+
+const COLS=[['types','state'],['providers','tools'],['judge'],['loop'],['agent'],['examples']];
+
+const EDGES=[
+  {from:'types',    to:'state',    cat:'types'  },
+  {from:'types',    to:'providers',cat:'types'  },
+  {from:'types',    to:'judge',    cat:'types'  },
+  {from:'types',    to:'loop',     cat:'types'  },
+  {from:'state',    to:'agent',    cat:'memory' },
+  {from:'providers',to:'agent',    cat:'ai'     },
+  {from:'tools',    to:'agent',    cat:'tools'  },
+  {from:'judge',    to:'agent',    cat:'harness'},
+  {from:'loop',     to:'agent',    cat:'harness'},
+  {from:'agent',    to:'examples', cat:'harness'},
+  {from:'tools',    to:'examples', cat:'tools'  },
+];
+
+/* ─── zoom ───────────────────────────────────────────────────────────────────── */
+let zoom = 0.75;
+
+function setZoom(z){
+  zoom = Math.max(0.4, Math.min(1.3, z));
+  const board = document.getElementById('board');
+  board.style.transform = `scale(${zoom})`;
+  // Collapse the unused layout space that transform doesn't affect,
+  // so the canvas scrollbar reflects the visual (scaled) size
+  board.style.marginRight  = -(board.offsetWidth  * (1 - zoom)) + 'px';
+  board.style.marginBottom = -(board.offsetHeight * (1 - zoom)) + 'px';
+  document.getElementById('zoomLbl').textContent = Math.round(zoom*100)+'%';
+  redraw();
+}
+
+/* ─── build cards ────────────────────────────────────────────────────────────── */
+function buildCards(){
+  const board = document.getElementById('board');
+  for(const ids of COLS){
+    const col = document.createElement('div'); col.className='col';
+    for(const fid of ids){
+      const f = FILES[fid];
+
+      const wrap = document.createElement('div'); wrap.className='card-wrap';
+
+      const primaryCat   = f.defines[0]?.cat || 'harness';
+      const primaryColor = C[primaryCat];
+      // Short name = filename without extension, uppercased
+      const shortName = f.file.split('/').pop().replace(/\.py$/,'').toUpperCase() + '.py';
+
+      const isCustom = fid === 'examples';
+      const borderColor  = isCustom ? '#6d28d9' : primaryColor;
+      const headerBg     = isCustom
+        ? 'linear-gradient(120deg,#4f46e5 0%,#7c3aed 45%,#c026d3 100%)'
+        : primaryColor;
+      const titleText    = isCustom
+        ? 'FILE AGENT'
+        : `${CLABEL[primaryCat]} · ${shortName}`;
+
+      const card = document.createElement('div');
+      card.className='card'; card.dataset.fid=fid;
+      card.style.borderColor = borderColor;
+      if(isCustom) card.style.boxShadow='0 0 0 1px #7c3aed44, 0 2px 12px rgba(124,58,237,.18)';
+
+      const hdr = document.createElement('div'); hdr.className='card-header';
+      hdr.style.background = headerBg;
+      hdr.innerHTML=`<span class="hdr-title">${titleText}</span>`;
+      card.appendChild(hdr);
+
+      if(f.defines.length){
+        const lbl=document.createElement('div'); lbl.className='sec-lbl'; lbl.textContent='Defines';
+        card.appendChild(lbl);
+        for(const d of f.defines){
+          const row=document.createElement('div'); row.className='def-row';
+          row.innerHTML=`<div class="row-bar" style="background:${C[d.cat]}"></div>
+            <span class="def-name">${d.name}</span><span class="def-kind">${d.kind}</span>`;
+          card.appendChild(row);
+        }
+      }
+
+      if(f.uses.length){
+        const useSec=document.createElement('div'); useSec.className='uses-section';
+        const lbl=document.createElement('div'); lbl.className='sec-lbl'; lbl.textContent='Uses from';
+        useSec.appendChild(lbl);
+
+        const groups={};
+        for(const u of f.uses){ if(!groups[u.cat]) groups[u.cat]=[]; groups[u.cat].push(u); }
+
+        for(const [cat,items] of Object.entries(groups)){
+          const grp=document.createElement('div');
+          grp.className='cat-group'; grp.dataset.cat=cat; grp.dataset.fid=fid;
+
+          const head=document.createElement('div'); head.className='cat-head';
+          head.innerHTML=`<div class="cat-bar" style="background:${C[cat]}"></div>
+            <span class="cat-name">${CLABEL[cat]}</span>
+            <span class="cat-count">${items.length}</span>
+            <span class="cat-chevron">▶</span>`;
+
+          const body=document.createElement('div'); body.className='cat-body';
+          head.addEventListener('click',()=>{ head.classList.toggle('open'); body.classList.toggle('open'); setTimeout(redraw,10); });
+
+          for(const u of items){
+            const item=document.createElement('div'); item.className='sym-item';
+            item.dataset.src=u.src; item.dataset.cat=cat; item.dataset.fid=fid;
+            const code=document.createElement('div'); code.className='sym-code';
+            code.innerHTML=u.code;
+            item.innerHTML=`<span class="sym-label">${u.label}</span><span class="sym-desc">${u.desc}</span>`;
+            item.appendChild(code);
+
+            item.addEventListener('click',e=>{
+              e.stopPropagation();
+              const wasOpen=item.classList.contains('open');
+              body.querySelectorAll('.sym-item.open').forEach(el=>{
+                el.classList.remove('open'); el.querySelector('.sym-code').classList.remove('open');
+              });
+              if(!wasOpen){ item.classList.add('open'); code.classList.add('open'); focusSymbol(fid,u.src,cat); }
+              else { clearFocus(); }
+              setTimeout(redraw,10);
+            });
+            body.appendChild(item);
+          }
+          grp.appendChild(head); grp.appendChild(body);
+          useSec.appendChild(grp);
+        }
+        card.appendChild(useSec);
+      }
+
+      wrap.appendChild(card);
+      col.appendChild(wrap);
+    }
+    board.appendChild(col);
+  }
+}
+
+/* ─── focus ──────────────────────────────────────────────────────────────────── */
+let focusState=null;
+
+function focusSymbol(targetFid,srcFid,cat){
+  focusState={targetFid,srcFid,cat};
+  document.getElementById('overlay').classList.add('on');
+
+  const hdrH = document.querySelector('header').offsetHeight;
+  const vCX  = window.innerWidth/2;
+  const vCY  = hdrH + (window.innerHeight - hdrH)/2;
+  const same = srcFid===targetFid;
+  // scale so card appears at ~100% screen size regardless of board zoom
+  const focusScale = Math.min(1.05/zoom, 2.2);
+  // half-span must account for the scaled card width, not just the pre-scale width
+  const scaledCardW = 256 * zoom * focusScale; // actual screen px after scale
+  const halfSpan = scaledCardW/2 + 32;         // 32px gap between the two cards
+
+  document.querySelectorAll('.card').forEach(c=>{
+    const fid=c.dataset.fid;
+    c.classList.remove('focused','dimmed');
+    c.style.transform='';
+    if(fid===targetFid||fid===srcFid){
+      c.classList.add('focused');
+      const r=c.getBoundingClientRect();
+      const origCX=r.left+r.width/2, origCY=r.top+r.height/2;
+      const destCX = same ? vCX : (fid===srcFid ? vCX-halfSpan : vCX+halfSpan);
+      // translate is applied in board CSS space → divide viewport delta by zoom
+      const tx=(destCX-origCX)/zoom, ty=(vCY-origCY)/zoom;
+      c.style.transform=`translate(${tx}px,${ty}px) scale(${focusScale})`;
+    } else {
+      c.classList.add('dimmed');
+    }
+  });
+  redraw();
+}
+
+function clearFocus(){
+  focusState=null;
+  document.getElementById('overlay').classList.remove('on');
+  document.querySelectorAll('.card').forEach(c=>{
+    c.classList.remove('focused','dimmed');
+    c.style.transform='';
+  });
+  document.querySelectorAll('.sym-item.open').forEach(el=>{
+    el.classList.remove('open'); el.querySelector('.sym-code').classList.remove('open');
+  });
+  redraw();
+}
+
+document.getElementById('overlay').addEventListener('click',clearFocus);
+
+/* ─── arrows ─────────────────────────────────────────────────────────────────── */
+function svgEl(tag){return document.createElementNS('http://www.w3.org/2000/svg',tag)}
+
+function redraw(){
+  const board = document.getElementById('board');
+  const svg   = document.getElementById('arrowSvg');
+  const br    = board.getBoundingClientRect(); // board's scaled viewport rect
+
+  svg.setAttribute('width',  board.offsetWidth);   // SVG in board layout space
+  svg.setAttribute('height', board.offsetHeight);
+  svg.innerHTML='';
+
+  const defs=svgEl('defs');
+  for(const [cat,col] of Object.entries(C)){
+    for(const suf of ['','_hi']){
+      const mk=svgEl('marker');
+      mk.setAttribute('id','mk-'+cat+suf);
+      mk.setAttribute('markerWidth','8'); mk.setAttribute('markerHeight','8');
+      mk.setAttribute('refX','7'); mk.setAttribute('refY','4');
+      mk.setAttribute('orient','auto');
+      const p=svgEl('path'); p.setAttribute('d','M0,0 L0,8 L8,4 Z'); p.setAttribute('fill',col);
+      mk.appendChild(p); defs.appendChild(mk);
+    }
+  }
+  svg.appendChild(defs);
+
+  // convert viewport coords → board layout (SVG) space
+  const b=(vx,vy)=>[(vx-br.left)/zoom, (vy-br.top)/zoom];
+
+  const tCount={}, tIdx={};
+  for(const e of EDGES){ const k=`${e.to}:${e.cat}`; tCount[k]=(tCount[k]||0)+1; tIdx[k]=0; }
+
+  for(const edge of EDGES){
+    const fromEl=document.querySelector(`[data-fid="${edge.from}"]`);
+    const grpEl =document.querySelector(`[data-fid="${edge.to}"][data-cat="${edge.cat}"].cat-group`);
+    const toEl  =grpEl||document.querySelector(`[data-fid="${edge.to}"]`);
+    if(!fromEl||!toEl) continue;
+
+    const fr=fromEl.getBoundingClientRect();
+    const tr=toEl.getBoundingClientRect();
+
+    const k=`${edge.to}:${edge.cat}`;
+    const n=tCount[k], idx=tIdx[k]++;
+    const off=(n>1?(idx-(n-1)/2)*12:0); // offset in board space
+
+    const [x1,y1]=b(fr.right,          fr.top + fr.height/2);
+    const [x2,y2]=b(tr.left - 8*zoom,  tr.top + tr.height/2 + off*zoom);
+    const kx=Math.abs(x2-x1)*0.46;
+
+    const isHi=focusState&&focusState.srcFid===edge.from&&focusState.targetFid===edge.to&&focusState.cat===edge.cat;
+
+    const path=svgEl('path');
+    path.setAttribute('d',`M${x1} ${y1} C${x1+kx} ${y1} ${x2-kx} ${y2} ${x2} ${y2}`);
+    path.setAttribute('fill','none');
+    path.setAttribute('stroke',C[edge.cat]);
+    path.setAttribute('stroke-width',isHi?'4':'2.5');
+    path.setAttribute('opacity',focusState?(isHi?'1':'0.07'):'0.45');
+    path.setAttribute('marker-end',`url(#mk-${edge.cat}${isHi?'_hi':''})`);
+    svg.appendChild(path);
+  }
+}
+
+/* ─── drag ───────────────────────────────────────────────────────────────────── */
+function makeDraggable(card){
+  card.querySelector('.card-header').addEventListener('mousedown',e=>{
+    if(e.button!==0) return;
+    e.preventDefault();
+
+    const board = document.getElementById('board');
+    const wrap  = card.parentElement;
+
+    // Capture mouse offset from wrap's top-left in viewport space, BEFORE reparenting
+    const wr  = wrap.getBoundingClientRect();
+    const offX = e.clientX - wr.left;
+    const offY = e.clientY - wr.top;
+
+    if(wrap.style.position !== 'absolute'){
+      const br = board.getBoundingClientRect();
+      board.appendChild(wrap);
+      wrap.style.position = 'absolute';
+      wrap.style.width    = '256px';
+      wrap.style.left = (wr.left - br.left) / zoom + 'px';
+      wrap.style.top  = (wr.top  - br.top)  / zoom + 'px';
+    }
+
+    card.classList.add('dragging');
+
+    function onMove(ev){
+      const br = board.getBoundingClientRect();
+      wrap.style.left = (ev.clientX - br.left - offX) / zoom + 'px';
+      wrap.style.top  = (ev.clientY - br.top  - offY) / zoom + 'px';
+      redraw();
+    }
+    function onUp(){
+      card.classList.remove('dragging');
+      document.removeEventListener('mousemove',onMove);
+      document.removeEventListener('mouseup',  onUp);
+      redraw();
+    }
+    document.addEventListener('mousemove',onMove);
+    document.addEventListener('mouseup',  onUp);
+  });
+}
+
+/* ─── init ───────────────────────────────────────────────────────────────────── */
+buildCards();
+document.querySelectorAll('.card').forEach(makeDraggable);
+
+setZoom(0.75);
+
+document.getElementById('zoomIn') .addEventListener('click',()=>setZoom(zoom+0.1));
+document.getElementById('zoomOut').addEventListener('click',()=>setZoom(zoom-0.1));
+document.getElementById('canvas').addEventListener('wheel',e=>{
+  if(e.ctrlKey||e.metaKey){ e.preventDefault(); setZoom(zoom-e.deltaY*0.001); }
+},{passive:false});
+
+document.getElementById('canvas').addEventListener('scroll',redraw);
+window.addEventListener('resize',redraw);
+redraw();
+</script>
+</body>
+</html>

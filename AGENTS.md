@@ -39,6 +39,10 @@ state/base.py       — AgentState dataclass. holds list[Message]. extend per pr
 
 examples/           — complete working agents. each example is self-contained and
                       shows exactly how to wire Agent + tools + execute together.
+
+architecture.html   — interactive browser visualisation of every file, what it defines,
+                      and how data flows between them. open directly in a browser.
+                      drag cards, zoom, click symbols to trace dependencies.
 ```
 
 ## Rules for contributing new code
@@ -50,6 +54,11 @@ examples/           — complete working agents. each example is self-contained 
 - Do not add logging frameworks, config systems, or CLI argument parsers beyond what is already in the examples.
 - Do not add type stubs, abstract base classes, or protocol classes unless there is a clear reason.
 - New providers go in `core/providers.py` — add a `_to_X_messages()` converter and a `X_think()` factory. Add the provider to `_THINK_FACTORIES` and `_TOOL_FORMATS` in `core/agent.py`.
+
+## Execute return format
+
+`execute(tool_call, task)` must return `{"content": "..."}` or `None`. The loop reads
+`tool_call_id` from the `ToolCall` object directly — do not include it in the return dict.
 
 ## Message format
 

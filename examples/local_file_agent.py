@@ -79,26 +79,26 @@ def make_execute(target_dir: Path):
         if name == "list_files":
             files = [f.name for f in target_dir.iterdir() if f.is_file()]
             if not files:
-                return {"tool_call_id": tool_call.id, "content": "No files found in directory."}
-            return {"tool_call_id": tool_call.id, "content": "\n".join(files)}
+                return {"content": "No files found in directory."}
+            return {"content": "\n".join(files)}
 
         if name == "read_file":
             filename = args.get("filename", "")
             path = target_dir / filename
             if not path.is_relative_to(target_dir):
-                return {"tool_call_id": tool_call.id, "content": "Access denied — file is outside target directory."}
+                return {"content": "Access denied — file is outside target directory."}
             if not path.exists():
-                return {"tool_call_id": tool_call.id, "content": f"File not found: {filename}"}
-            return {"tool_call_id": tool_call.id, "content": path.read_text(errors="replace")}
+                return {"content": f"File not found: {filename}"}
+            return {"content": path.read_text(errors="replace")}
 
         if name == "ask_human":
             question = args.get("question", "")
             print(f"\n[ask_human] {question}")
             answer = input("Your answer: ").strip()
             print(f"[human] {answer}")
-            return {"tool_call_id": tool_call.id, "content": answer}
+            return {"content": answer}
 
-        return {"tool_call_id": tool_call.id, "content": f"Unknown tool: {name}"}
+        return {"content": f"Unknown tool: {name}"}
 
     return execute
 
@@ -120,13 +120,13 @@ async def main():
     if args.backend == "gemini":
         from google import genai
         client = genai.Client(api_key=os.getenv("GEMINI_API_KEY", ""))
-        model  = args.model or "gemini-2.5-flash"
+        model  = args.model or "gemini-3.5-flash"
     elif args.backend == "ollama":
         client = AsyncOpenAI(base_url=OLLAMA_BASE_URL, api_key="ollama")
         model  = args.model or "gemma4:4b"
     else:
         client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY", ""))
-        model  = args.model or "gpt-4.1"
+        model  = args.model or "gpt-5.5-instant"
 
     agent = Agent(
         client=client,
